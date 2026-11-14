@@ -5,6 +5,14 @@ struct SettingsView: View {
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("autoConnectOnLaunch") private var autoConnectOnLaunch = true
 
+    /// 从 bundle 读取，避免版本号在两处各写一遍后走样。
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String ?? "—"
+        return "\(version) (\(build))"
+    }
+
     var body: some View {
         TabView {
             Form {
@@ -48,7 +56,7 @@ struct SettingsView: View {
             Form {
                 Section("关于") {
                     LabeledContent("名称") { Text("RoseLink for macOS") }
-                    LabeledContent("版本") { Text("1.1") }
+                    LabeledContent("版本") { Text(appVersion) }
                     LabeledContent("数据来源") { Text("RoseLink 3.8.5 APK") }
                 }
 
