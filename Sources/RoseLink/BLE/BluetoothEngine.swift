@@ -308,19 +308,16 @@ final class BluetoothEngine: NSObject, ObservableObject {
             _ = deviceRef.openConnection()   // 阻塞，但不在主线程
 
             var waited = 0.0
-            while !deviceRef.isConnected() && waited < 6.0 {
+            while !deviceRef.isConnected() && waited < 4.0 {
                 Thread.sleep(forTimeInterval: 0.25)
                 waited += 0.25
             }
-            let connected = deviceRef.isConnected()
 
             DispatchQueue.main.async {
-                guard let self else { return }
-                if connected {
-                    self.finishOpeningChannel(on: deviceRef)
-                } else {
-                    self.phase = .failed("无法建立经典蓝牙连接，请确认耳机已开机并与本机配对")
-                }
+                guard let self, self.classicDevice === deviceRef else { return }
+                // 即使 isConnected() 仍为 false 也要继续尝试打开通道：
+                // 已配对设备会在 RFCOMM 打开时按需建立底座链路，这个标志并不可靠。
+                self.finishOpeningChannel(on: deviceRef)
             }
         }
     }
@@ -332,13 +329,20 @@ final class BluetoothEngine: NSObject, ObservableObject {
         var channel: IOBluetoothRFCOMMChannel?
         let result = device.openRFCOMMChannelSync(&channel, withChannelID: channelID, delegate: self)
         guard result == kIOReturnSuccess, let channel else {
-            // 上一次会话可能还没被耳机侧释放（退出后立刻重开会命中），稍等重试。
             channelOpenAttempts += 1
-            if channelOpenAttempts < 3 {
-                phase = .discovering(device.name ?? "耳机")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                    guard let self, self.classicDevice === device else { return }
-                    self.finishOpeningChannel(on: device)
+            if channelOpenAttempts <= 2 {
+                // 耳机侧释放上一次会话需要时间，稍等重试。
+                scheduleChannelRetry(on: device, after: 1.5)
+            } else if channelOpenAttempts == 3 {
+                // 会话彻底僵住时，断开底座链路再重连可以把它复位（实测有效）。
+                let deviceRef = device
+                classicQueue.async { [weak self] in
+                    deviceRef.closeConnection()
+                    Thread.sleep(forTimeInterval: 1.0)
+                    DispatchQueue.main.async {
+                        guard let self, self.classicDevice === deviceRef else { return }
+                        self.scheduleChannelRetry(on: deviceRef, after: 0.5)
+                    }
                 }
             } else {
                 channelOpenAttempts = 0
@@ -355,6 +359,15 @@ final class BluetoothEngine: NSObject, ObservableObject {
         restoreCachedCaseBattery()
         if let poll = CommandSet.profile(for: activeFamily).pollAll() {
             send(poll, note: "查询设备状态")
+        }
+    }
+
+    /// 延迟后重试打开控制通道。
+    private func scheduleChannelRetry(on device: IOBluetoothDevice, after delay: TimeInterval) {
+        phase = .discovering(device.name ?? "耳机")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.classicDevice === device else { return }
+            self.finishOpeningChannel(on: device)
         }
     }
 
