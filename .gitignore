@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# 构建产物
+*.app
+RoseLink.app/
+
+# 图标生成的中间文件（由 Tools/make-icon.swift 生成）
+# AppIcon.icns 是最终产物，需要提交
+Resources/AppIcon.iconset/
+Resources/icon_1024.png
+
+# 逆向分析素材：体积大且含他人版权内容，不入库
+*.apk
+btsnoop_hci.log
+*.hci.log
