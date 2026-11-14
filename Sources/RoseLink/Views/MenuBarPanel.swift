@@ -98,10 +98,10 @@ struct MenuBarPanel: View {
 
     private var batteryRow: some View {
         HStack(spacing: 6) {
-            BatteryIndicator(target: .left, value: engine.state.batteryLeft)
-            BatteryIndicator(target: .right, value: engine.state.batteryRight)
+            BatteryIndicator(target: .left, value: engine.state.batteryLeft, charging: engine.state.batteryLeftCharging)
+            BatteryIndicator(target: .right, value: engine.state.batteryRight, charging: engine.state.batteryRightCharging)
             if let batteryCase = engine.state.batteryCase {
-                BatteryIndicator(target: .chargingCase, value: batteryCase)
+                BatteryIndicator(target: .chargingCase, value: batteryCase, charging: engine.state.batteryCaseCharging)
                     .help(
                         engine.state.batteryCaseUpdatedAt
                             .map { BatteryFreshness.caseBatteryDescription(for: $0) }

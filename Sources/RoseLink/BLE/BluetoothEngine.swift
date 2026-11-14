@@ -50,6 +50,11 @@ struct DeviceState {
     var batteryCase: Int?
     var batteryCaseUpdatedAt: Date?
 
+    /// 电量字节的最高位是充电标志（实测：入仓充电时左耳上报 `BD` = 0x80 | 61）。
+    var batteryLeftCharging = false
+    var batteryRightCharging = false
+    var batteryCaseCharging = false
+
     var noiseMode: NoiseMode?
     var ancLevel: Int?
     var transparencyLevel: Int?
@@ -67,6 +72,13 @@ struct DeviceState {
     /// 主显示电量取左右耳中较高的那个。
     var battery: Int? {
         [batteryLeft, batteryRight].compactMap { $0 }.max()
+    }
+
+    /// 电量字节：低 7 位是百分比，最高位是充电标志。
+    static func parseBattery(_ raw: UInt8) -> (level: Int?, charging: Bool) {
+        let value = Int(raw)
+        let percent = value & 0x7F
+        return ((1...100).contains(percent) ? percent : nil, (value & 0x80) != 0)
     }
 
     /// 按用户选择的来源取电量；缺失时返回 nil，由调用方决定怎么展示。
@@ -523,17 +535,28 @@ final class BluetoothEngine: NSObject, ObservableObject {
     private func apply(type: UInt8, value: [UInt8]) {
         switch type {
         case 0x0C:
-            // 左耳 / 右耳 / 充电仓
+            // 左耳 / 右耳 / 充电仓。每个字节的最高位是充电标志，低 7 位才是电量。
             if value.count >= 2 {
-                if (1...100).contains(Int(value[0])) { state.batteryLeft = Int(value[0]) }
-                if (1...100).contains(Int(value[1])) { state.batteryRight = Int(value[1]) }
+                let left = DeviceState.parseBattery(value[0])
+                if let level = left.level { state.batteryLeft = level }
+                state.batteryLeftCharging = left.charging
+
+                let right = DeviceState.parseBattery(value[1])
+                if let level = right.level { state.batteryRight = level }
+                state.batteryRightCharging = right.charging
             }
-            // 只有拿到有效值才刷新仓电量与时间戳；上报 0 说明耳机出仓，保留上次结果。
-            if value.count >= 3, (1...100).contains(Int(value[2])) {
-                let caseLevel = Int(value[2])
-                state.batteryCase = caseLevel
-                state.batteryCaseUpdatedAt = Date()
-                cacheCaseBattery(caseLevel)
+            // 仓电量的数值并不会实时刷新，设备只是把同一个旧值反复带上来。
+            // 因此只有**数值发生变化**才认为产生了一次新的检测，时间戳随之前进；
+            // 上报 0（耳机出仓）也保留上次结果，不做清空。
+            if value.count >= 3 {
+                let raw = Int(value[2])
+                let caseLevel = raw & 0x7F
+                state.batteryCaseCharging = (raw & 0x80) != 0
+                if (1...100).contains(caseLevel), state.batteryCase != caseLevel {
+                    state.batteryCase = caseLevel
+                    state.batteryCaseUpdatedAt = Date()
+                    cacheCaseBattery(caseLevel)
+                }
             }
         case 0x09:
             state.noiseMode = [

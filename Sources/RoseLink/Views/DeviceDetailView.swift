@@ -101,19 +101,26 @@ struct DeviceDetailView: View {
                     .accessibilityValue(engine.state.battery.map { "\($0)%" } ?? "未知")
 
                     HStack(spacing: 14) {
-                        BatteryIndicator(target: .left, value: engine.state.batteryLeft)
-                        BatteryIndicator(target: .right, value: engine.state.batteryRight)
+                        BatteryIndicator(target: .left, value: engine.state.batteryLeft, charging: engine.state.batteryLeftCharging)
+                        BatteryIndicator(target: .right, value: engine.state.batteryRight, charging: engine.state.batteryRightCharging)
                         if let batteryCase = engine.state.batteryCase {
-                            BatteryIndicator(target: .chargingCase, value: batteryCase)
+                            BatteryIndicator(target: .chargingCase, value: batteryCase, charging: engine.state.batteryCaseCharging)
                         }
                     }
 
                     // 耳机仓出仓后不再上报，标注数据新鲜度，避免误以为是实时值。
                     if let updatedAt = engine.state.batteryCaseUpdatedAt {
-                        TimelineView(.periodic(from: .now, by: 30)) { _ in
-                            Text(BatteryFreshness.caseBatteryDescription(for: updatedAt))
+                        VStack(alignment: .leading, spacing: 2) {
+                            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                                Text(BatteryFreshness.caseBatteryDescription(for: updatedAt))
+                                    .font(.caption2)
+                                    .foregroundStyle(
+                                        BatteryFreshness.isStale(updatedAt) ? Color.orange : Color.secondary
+                                    )
+                            }
+                            Text("耳机仓电量仅在耳机放回仓内时才能读取，因此可能不是实时值")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }

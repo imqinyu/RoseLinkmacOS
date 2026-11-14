@@ -69,6 +69,7 @@ enum BatteryTarget {
 struct BatteryIndicator: View {
     let target: BatteryTarget
     let value: Int?
+    var charging: Bool = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -85,16 +86,26 @@ struct BatteryIndicator: View {
             Text(value.map { "\($0)%" } ?? "—")
                 .font(.caption.weight(.medium))
                 .monospacedDigit()
+
+            if charging {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.green)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(target.accessibilityName)电量 \(value.map { "\($0)%" } ?? "未知")")
+        .accessibilityLabel("\(target.accessibilityName)电量 \(value.map { "\($0)%" } ?? "未知")\(charging ? "，充电中" : "")")
     }
 }
 
-/// 把「上次更新时间」说成人话。耳机仓电量只入仓时上报，所以要标明新鲜度。
+/// 仓电量的「上次更新」文案。
+///
+/// 用相对时间（刚刚 / N 分钟前）：耳机仓电量的数值并不会实时刷新，
+/// 时间戳只在数值真正变化时才前进，所以「N 分钟前」能如实反映数据新旧。
 enum BatteryFreshness {
     private static let clock: DateFormatter = {
         let f = DateFormatter()
@@ -109,6 +120,13 @@ enum BatteryFreshness {
         f.dateFormat = "M月d日 HH:mm"
         return f
     }()
+
+    /// 超过这个时长没有新数值，就认为展示的是旧数据。
+    static let staleInterval: TimeInterval = 15 * 60
+
+    static func isStale(_ date: Date, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(date) > staleInterval
+    }
 
     /// 只给相对时间本身：刚刚 / 5 分钟前 / 今天 21:05 / 3月2日 18:20
     static func relativeText(for date: Date, now: Date = Date()) -> String {
@@ -125,7 +143,6 @@ enum BatteryFreshness {
         return dayAndClock.string(from: date)
     }
 
-    /// 完整句子，主窗口与菜单栏提示共用。
     static func caseBatteryDescription(for date: Date, now: Date = Date()) -> String {
         "上次更新耳机仓电量：\(relativeText(for: date, now: now))"
     }
