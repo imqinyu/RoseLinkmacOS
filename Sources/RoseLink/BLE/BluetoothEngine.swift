@@ -45,7 +45,10 @@ struct DeviceState {
     /// 电量：`0x0C` 回包依次是左耳、右耳、充电仓（实测 MK2 为 55 / 53 / 0）。
     var batteryLeft: Int?
     var batteryRight: Int?
+    /// 耳机仓电量。耳机出仓后设备不再上报（字节为 0），这里保留上一次的有效值，
+    /// 配合 `batteryCaseUpdatedAt` 标明数据新鲜度——官方 App 也是这个做法。
     var batteryCase: Int?
+    var batteryCaseUpdatedAt: Date?
 
     var noiseMode: NoiseMode?
     var ancLevel: Int?
@@ -161,7 +164,12 @@ final class BluetoothEngine: NSObject, ObservableObject {
     private var classicDevice: IOBluetoothDevice?
     private var rfcommChannel: IOBluetoothRFCOMMChannel?
     private var classicDevices: [String: IOBluetoothDevice] = [:]
-    private var classicRetryCount = 0
+    /// IOBluetooth 的若干 API 是同步阻塞的，统一丢到这个队列。
+    private let classicQueue = DispatchQueue(label: "ai.roselink.classic", qos: .userInitiated)
+    /// 控制通道打开的重试计数（耳机侧释放会话需要一点时间）。
+    private var channelOpenAttempts = 0
+    /// 当前设备标识，用来把仓电量缓存按设备分开存。
+    private var currentDeviceKey: String?
 
     private var stream = FrameStream(family: .rsCommonV2)
     private var sequence: UInt8 = 0
@@ -227,6 +235,7 @@ final class BluetoothEngine: NSObject, ObservableObject {
 
     func connect(_ device: DiscoveredDevice) {
         remember(device)
+        currentDeviceKey = device.id
         switch device.transport {
         case .rfcomm:
             connectClassic(device)
@@ -267,48 +276,106 @@ final class BluetoothEngine: NSObject, ObservableObject {
         teardown()
 
         classicDevice = target
+        channelOpenAttempts = 0
         activeTransport = .rfcomm
         activeFamily = preferredFamily == .auto ? (device.family ?? .rsCommonV2) : preferredFamily
-        classicRetryCount = 0
         phase = .connecting(device.displayName)
         openClassicChannel()
     }
 
+    /// 建立经典蓝牙连接并打开控制通道。
+    ///
+    /// `IOBluetoothDevice.openConnection()` 是**同步阻塞**的（内部靠信号量等待
+    /// 底座链路建立），一旦放在主线程上，整个 App 会被冻住——窗口和菜单栏都
+    /// 来不及创建，用户看到的就是「卡死」。设备已连接时它立即返回，所以只有
+    /// 换路径 / 蓝牙授权变更导致需要重新寻呼时才会暴露。
+    ///
+    /// 处理方式：只有这一步丢到 `classicQueue`；SDP 查询和 RFCOMM 打开仍留在
+    /// 主线程——SDP 的回包要靠主 runloop 处理，挪到没有 runloop 的后台线程会
+    /// 永久挂住（已实测）。
     private func openClassicChannel() {
         guard let device = classicDevice else { return }
         let name = device.name ?? "耳机"
 
-        guard device.isConnected() else {
-            // 音频通道还没连上，先主动建立基带连接再重试。
-            device.openConnection()
-            classicRetryCount += 1
-            if classicRetryCount > 12 {
-                phase = .failed("无法建立经典蓝牙连接，请确认耳机已开机并与本机配对")
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.openClassicChannel()
-            }
+        if device.isConnected() {
+            finishOpeningChannel(on: device)
             return
         }
 
-        phase = .discovering(name)
+        phase = .connecting(name)
+        let deviceRef = device
+        classicQueue.async { [weak self] in
+            _ = deviceRef.openConnection()   // 阻塞，但不在主线程
+
+            var waited = 0.0
+            while !deviceRef.isConnected() && waited < 6.0 {
+                Thread.sleep(forTimeInterval: 0.25)
+                waited += 0.25
+            }
+            let connected = deviceRef.isConnected()
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if connected {
+                    self.finishOpeningChannel(on: deviceRef)
+                } else {
+                    self.phase = .failed("无法建立经典蓝牙连接，请确认耳机已开机并与本机配对")
+                }
+            }
+        }
+    }
+
+    private func finishOpeningChannel(on device: IOBluetoothDevice) {
+        phase = .discovering(device.name ?? "耳机")
         let channelID = Self.controlChannelID(for: device)
 
         var channel: IOBluetoothRFCOMMChannel?
         let result = device.openRFCOMMChannelSync(&channel, withChannelID: channelID, delegate: self)
         guard result == kIOReturnSuccess, let channel else {
-            phase = .failed("打开控制通道失败（0x\(String(result, radix: 16))）")
+            // 上一次会话可能还没被耳机侧释放（退出后立刻重开会命中），稍等重试。
+            channelOpenAttempts += 1
+            if channelOpenAttempts < 3 {
+                phase = .discovering(device.name ?? "耳机")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, self.classicDevice === device else { return }
+                    self.finishOpeningChannel(on: device)
+                }
+            } else {
+                channelOpenAttempts = 0
+                phase = .failed("打开控制通道失败（0x\(String(result, radix: 16))）")
+            }
             return
         }
 
+        channelOpenAttempts = 0
         rfcommChannel = channel
         stream = FrameStream(family: activeFamily)
         sequence = 0
-        phase = .ready(name)
+        phase = .ready(device.name ?? "耳机")
+        restoreCachedCaseBattery()
         if let poll = CommandSet.profile(for: activeFamily).pollAll() {
             send(poll, note: "查询设备状态")
         }
+    }
+
+    // MARK: 仓电量缓存
+
+    /// 耳机出仓后设备不再上报仓电量，缓存最近一次有效值以便下次连接直接展示。
+    private func cacheCaseBattery(_ level: Int) {
+        guard let key = currentDeviceKey else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(level, forKey: "caseBatteryValue.\(key)")
+        defaults.set(Date().timeIntervalSince1970, forKey: "caseBatteryTime.\(key)")
+    }
+
+    private func restoreCachedCaseBattery() {
+        guard let key = currentDeviceKey else { return }
+        let defaults = UserDefaults.standard
+        let level = defaults.integer(forKey: "caseBatteryValue.\(key)")
+        let stamp = defaults.double(forKey: "caseBatteryTime.\(key)")
+        guard (1...100).contains(level), stamp > 0 else { return }
+        state.batteryCase = level
+        state.batteryCaseUpdatedAt = Date(timeIntervalSince1970: stamp)
     }
 
     /// APK 里 SPP 控制通道的 DLCI 是 12，对应 RFCOMM 服务通道 6。
@@ -397,7 +464,6 @@ final class BluetoothEngine: NSObject, ObservableObject {
         }
         rfcommChannel = nil
         classicDevice = nil
-        classicRetryCount = 0
 
         if let peripheral {
             if let rx = rxCharacteristic, rx.isNotifying {
@@ -411,6 +477,7 @@ final class BluetoothEngine: NSObject, ObservableObject {
 
         stream.reset()
         sequence = 0
+        channelOpenAttempts = 0
         state = DeviceState()
     }
 
@@ -447,9 +514,13 @@ final class BluetoothEngine: NSObject, ObservableObject {
             if value.count >= 2 {
                 if (1...100).contains(Int(value[0])) { state.batteryLeft = Int(value[0]) }
                 if (1...100).contains(Int(value[1])) { state.batteryRight = Int(value[1]) }
-                if value.count >= 3, (1...100).contains(Int(value[2])) {
-                    state.batteryCase = Int(value[2])
-                }
+            }
+            // 只有拿到有效值才刷新仓电量与时间戳；上报 0 说明耳机出仓，保留上次结果。
+            if value.count >= 3, (1...100).contains(Int(value[2])) {
+                let caseLevel = Int(value[2])
+                state.batteryCase = caseLevel
+                state.batteryCaseUpdatedAt = Date()
+                cacheCaseBattery(caseLevel)
             }
         case 0x09:
             state.noiseMode = [
@@ -506,11 +577,14 @@ extension BluetoothEngine: IOBluetoothRFCOMMChannelDelegate {
 
     func rfcommChannelOpenComplete(_ channel: IOBluetoothRFCOMMChannel!, status error: IOReturn) {
         guard error == kIOReturnSuccess else {
-            phase = .failed("控制通道打开失败（0x\(String(error, radix: 16))）")
+            // 同步打开时这里通常已经有结果了，仅在还没就绪时上报。
+            if !phase.isReady {
+                phase = .failed("控制通道打开失败（0x\(String(error, radix: 16))）")
+            }
             return
         }
-        guard let device = classicDevice else { return }
-        phase = .ready(device.name ?? "耳机")
+        if rfcommChannel == nil { rfcommChannel = channel }
+        // 就绪状态与首帧轮询由 finishOpeningChannel 负责，这里不重复发。
     }
 
     func rfcommChannelData(
@@ -662,6 +736,7 @@ extension BluetoothEngine: CBPeripheralDelegate {
         guard error == nil, characteristic.isNotifying else { return }
         stream = FrameStream(family: activeFamily)
         phase = .ready(peripheral.name ?? "耳机")
+        restoreCachedCaseBattery()
         if let poll = CommandSet.profile(for: activeFamily).pollAll() {
             send(poll, note: "查询设备状态")
         }

@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("autoConnectOnLaunch") private var autoConnectOnLaunch = true
+    @AppStorage("alwaysHideWindow") private var alwaysHideWindow = true
     @AppStorage("menuBarBatterySource") private var menuBarBatterySource = BatterySource.highest.rawValue
     @AppStorage("menuBarShowsBattery") private var menuBarBatteryShowsValue = true
 
@@ -34,10 +35,12 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("启动时自动连接上次的设备", isOn: $autoConnectOnLaunch)
+
+                    Toggle("始终隐藏主窗口", isOn: $alwaysHideWindow)
                 } header: {
                     Text("启动")
                 } footer: {
-                    Text("关闭后，应用启动只列出设备，需要手动连接。")
+                    Text("默认开启：每次启动只驻留菜单栏，开机自启不会弹窗。关闭后，首次运行会打开一次主窗口，之后同样只驻留菜单栏。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

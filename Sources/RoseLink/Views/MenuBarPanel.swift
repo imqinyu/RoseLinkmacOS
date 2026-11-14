@@ -103,6 +103,11 @@ struct MenuBarPanel: View {
             BatteryIndicator(target: .right, value: engine.state.batteryRight)
             if let batteryCase = engine.state.batteryCase {
                 BatteryIndicator(target: .chargingCase, value: batteryCase)
+                    .help(
+                        engine.state.batteryCaseUpdatedAt
+                            .map { BatteryFreshness.caseBatteryDescription(for: $0) }
+                            ?? "充电仓电量"
+                    )
             }
             Spacer(minLength: 0)
         }

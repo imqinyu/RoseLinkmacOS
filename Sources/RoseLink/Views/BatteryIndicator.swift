@@ -93,3 +93,40 @@ struct BatteryIndicator: View {
         .accessibilityLabel("\(target.accessibilityName)电量 \(value.map { "\($0)%" } ?? "未知")")
     }
 }
+
+/// 把「上次更新时间」说成人话。耳机仓电量只入仓时上报，所以要标明新鲜度。
+enum BatteryFreshness {
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private static let dayAndClock: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 HH:mm"
+        return f
+    }()
+
+    /// 只给相对时间本身：刚刚 / 5 分钟前 / 今天 21:05 / 3月2日 18:20
+    static func relativeText(for date: Date, now: Date = Date()) -> String {
+        let interval = now.timeIntervalSince(date)
+        if interval < 60 { return "刚刚" }
+        if interval < 3600 { return "\(Int(interval / 60)) 分钟前" }
+
+        if Calendar.current.isDateInToday(date) {
+            return "今天 \(clock.string(from: date))"
+        }
+        if Calendar.current.isDateInYesterday(date) {
+            return "昨天 \(clock.string(from: date))"
+        }
+        return dayAndClock.string(from: date)
+    }
+
+    /// 完整句子，主窗口与菜单栏提示共用。
+    static func caseBatteryDescription(for date: Date, now: Date = Date()) -> String {
+        "上次更新耳机仓电量：\(relativeText(for: date, now: now))"
+    }
+}

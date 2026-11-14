@@ -107,6 +107,15 @@ struct DeviceDetailView: View {
                             BatteryIndicator(target: .chargingCase, value: batteryCase)
                         }
                     }
+
+                    // 耳机仓出仓后不再上报，标注数据新鲜度，避免误以为是实时值。
+                    if let updatedAt = engine.state.batteryCaseUpdatedAt {
+                        TimelineView(.periodic(from: .now, by: 30)) { _ in
+                            Text(BatteryFreshness.caseBatteryDescription(for: updatedAt))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .padding(.vertical, 6)
