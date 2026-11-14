@@ -151,6 +151,31 @@ enum InterfaceLanguage: String, CaseIterable, Identifiable {
     var title: String { self == .chinese ? "中文" : "English" }
 }
 
+/// 菜单栏图标旁显示哪一个电量。
+///
+/// 聚合项（最高 / 最低 / 平均）只统计左右耳——耳机仓在收纳状态下常上报 0，
+/// 混进去会把平均值拉得离谱。
+enum BatterySource: String, CaseIterable, Identifiable {
+    case highest, lowest, average, left, right, chargingCase
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .highest: return "最高电量"
+        case .lowest: return "最低电量"
+        case .average: return "平均值"
+        case .left: return "左耳电量"
+        case .right: return "右耳电量"
+        case .chargingCase: return "耳机仓电量"
+        }
+    }
+
+    var isAggregate: Bool {
+        self == .highest || self == .lowest || self == .average
+    }
+}
+
 // MARK: - 设备识别
 
 /// 广播名 → 协议族映射。数据来自 APK 中各 `*_device_config.dart` 的

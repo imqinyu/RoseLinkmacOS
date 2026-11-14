@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("autoConnectOnLaunch") private var autoConnectOnLaunch = true
+    @AppStorage("menuBarBatterySource") private var menuBarBatterySource = BatterySource.highest.rawValue
 
     /// 从 bundle 读取，避免版本号在两处各写一遍后走样。
     private var appVersion: String {
@@ -42,10 +43,17 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("在菜单栏显示控制项", isOn: $showInMenuBar)
+
+                    Picker("图标旁显示", selection: $menuBarBatterySource) {
+                        ForEach(BatterySource.allCases) { source in
+                            Text(source.title).tag(source.rawValue)
+                        }
+                    }
+                    .disabled(!showInMenuBar)
                 } header: {
                     Text("菜单栏")
                 } footer: {
-                    Text("打开后可直接从菜单栏查看电量并切换降噪模式，无需切回主窗口。")
+                    Text("「最高 / 最低 / 平均值」只统计左右耳——耳机仓收纳时通常上报 0，混入会把平均值拉低。要看仓电量请单独选择。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

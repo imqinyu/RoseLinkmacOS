@@ -4,26 +4,32 @@ import SwiftUI
 /// 菜单栏常驻图标：连接时顺带显示电量。
 struct MenuBarLabel: View {
     @ObservedObject var engine: BluetoothEngine
+    @AppStorage("menuBarBatterySource") private var sourceRaw = BatterySource.highest.rawValue
+
+    private var source: BatterySource {
+        BatterySource(rawValue: sourceRaw) ?? .highest
+    }
+
+    private var battery: Int? {
+        guard engine.phase.isReady else { return nil }
+        return engine.state.battery(for: source)
+    }
 
     var body: some View {
-        if engine.phase.isReady, let battery = engine.state.battery {
+        if let battery {
             HStack(spacing: 3) {
-                Image(systemName: symbol)
+                Image(systemName: symbol(for: battery))
                 Text("\(battery)%")
                     .font(.system(size: 11, weight: .medium))
                     .monospacedDigit()
             }
         } else {
-            Image(systemName: symbol)
+            Image(systemName: "airpodspro")
         }
     }
 
-    private var symbol: String {
-        if !engine.phase.isReady { return "airpodspro" }
-        switch engine.state.battery ?? 100 {
-        case 0...15: return "airpodspro.chargingcase.wireless"
-        default: return "airpodspro"
-        }
+    private func symbol(for battery: Int) -> String {
+        battery <= 15 ? "airpodspro.chargingcase.wireless" : "airpodspro"
     }
 }
 

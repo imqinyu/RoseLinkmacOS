@@ -65,6 +65,26 @@ struct DeviceState {
     var battery: Int? {
         [batteryLeft, batteryRight].compactMap { $0 }.max()
     }
+
+    /// 按用户选择的来源取电量；缺失时返回 nil，由调用方决定怎么展示。
+    func battery(for source: BatterySource) -> Int? {
+        let ears = [batteryLeft, batteryRight].compactMap { $0 }
+        switch source {
+        case .left:
+            return batteryLeft
+        case .right:
+            return batteryRight
+        case .chargingCase:
+            return batteryCase
+        case .highest:
+            return ears.max()
+        case .lowest:
+            return ears.min()
+        case .average:
+            guard !ears.isEmpty else { return nil }
+            return Int((Double(ears.reduce(0, +)) / Double(ears.count)).rounded())
+        }
+    }
 }
 
 enum ConnectionPhase: Equatable {
