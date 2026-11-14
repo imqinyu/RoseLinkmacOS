@@ -5,6 +5,7 @@ struct SettingsView: View {
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("autoConnectOnLaunch") private var autoConnectOnLaunch = true
     @AppStorage("menuBarBatterySource") private var menuBarBatterySource = BatterySource.highest.rawValue
+    @AppStorage("menuBarShowsBattery") private var menuBarBatteryShowsValue = true
 
     /// 从 bundle 读取，避免版本号在两处各写一遍后走样。
     private var appVersion: String {
@@ -44,12 +45,15 @@ struct SettingsView: View {
                 Section {
                     Toggle("在菜单栏显示控制项", isOn: $showInMenuBar)
 
-                    Picker("图标旁显示", selection: $menuBarBatterySource) {
+                    Toggle("图标旁显示电量", isOn: $menuBarBatteryShowsValue)
+                        .disabled(!showInMenuBar)
+
+                    Picker("电量来源", selection: $menuBarBatterySource) {
                         ForEach(BatterySource.allCases) { source in
                             Text(source.title).tag(source.rawValue)
                         }
                     }
-                    .disabled(!showInMenuBar)
+                    .disabled(!showInMenuBar || !menuBarBatteryShowsValue)
                 } header: {
                     Text("菜单栏")
                 } footer: {

@@ -5,6 +5,7 @@ import SwiftUI
 struct MenuBarLabel: View {
     @ObservedObject var engine: BluetoothEngine
     @AppStorage("menuBarBatterySource") private var sourceRaw = BatterySource.highest.rawValue
+    @AppStorage("menuBarShowsBattery") private var showsBattery = true
 
     private var source: BatterySource {
         BatterySource(rawValue: sourceRaw) ?? .highest
@@ -16,7 +17,7 @@ struct MenuBarLabel: View {
     }
 
     var body: some View {
-        if let battery {
+        if showsBattery, let battery {
             HStack(spacing: 3) {
                 Image(systemName: symbol(for: battery))
                 Text("\(battery)%")
@@ -97,11 +98,11 @@ struct MenuBarPanel: View {
     }
 
     private var batteryRow: some View {
-        HStack(spacing: 8) {
-            BatteryBadge(title: "左", value: engine.state.batteryLeft)
-            BatteryBadge(title: "右", value: engine.state.batteryRight)
+        HStack(spacing: 6) {
+            BatteryIndicator(target: .left, value: engine.state.batteryLeft)
+            BatteryIndicator(target: .right, value: engine.state.batteryRight)
             if let batteryCase = engine.state.batteryCase {
-                BatteryBadge(title: "仓", value: batteryCase)
+                BatteryIndicator(target: .chargingCase, value: batteryCase)
             }
             Spacer(minLength: 0)
         }
@@ -161,7 +162,11 @@ struct MenuBarPanel: View {
             Spacer(minLength: 0)
 
             if engine.phase.isReady {
-                Button("断开") { engine.disconnect() }
+                Button {
+                    engine.disconnect()
+                } label: {
+                    Label("断开", systemImage: SystemSymbol.disconnect)
+                }
             } else {
                 Button("重新搜索") { engine.startScan() }
             }
@@ -196,23 +201,4 @@ struct MenuBarPanel: View {
     }
 }
 
-private struct BatteryBadge: View {
-    let title: String
-    let value: Int?
 
-    var body: some View {
-        HStack(spacing: 3) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value.map { "\($0)%" } ?? "—")
-                .font(.caption.weight(.medium))
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title)耳电量 \(value.map { "\($0)%" } ?? "未知")")
-    }
-}

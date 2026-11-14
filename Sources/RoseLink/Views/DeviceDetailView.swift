@@ -101,10 +101,10 @@ struct DeviceDetailView: View {
                     .accessibilityValue(engine.state.battery.map { "\($0)%" } ?? "未知")
 
                     HStack(spacing: 14) {
-                        BatteryChip(title: "左", value: engine.state.batteryLeft)
-                        BatteryChip(title: "右", value: engine.state.batteryRight)
+                        BatteryIndicator(target: .left, value: engine.state.batteryLeft)
+                        BatteryIndicator(target: .right, value: engine.state.batteryRight)
                         if let batteryCase = engine.state.batteryCase {
-                            BatteryChip(title: "仓", value: batteryCase)
+                            BatteryIndicator(target: .chargingCase, value: batteryCase)
                         }
                     }
                 }
@@ -434,23 +434,4 @@ struct DeviceDetailView: View {
     }
 }
 
-/// 单侧电量小标签。
-private struct BatteryChip: View {
-    let title: String
-    let value: Int?
 
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value.map { "\($0)%" } ?? "—")
-                .font(.caption.weight(.medium))
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
