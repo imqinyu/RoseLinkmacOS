@@ -144,6 +144,8 @@ struct MenuBarPanel: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
+                // 先把 Dock 图标和菜单栏恢复成常规 App，否则唤回的窗口拿不到焦点。
+                AppDelegate.restoreDockIcon()
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
@@ -157,6 +159,13 @@ struct MenuBarPanel: View {
             } else {
                 Button("重新搜索") { engine.startScan() }
             }
+
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Label("退出", systemImage: "power")
+            }
+            .help("退出 RoseLink")
         }
         .controlSize(.small)
     }

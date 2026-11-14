@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct RoseLinkApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var engine = BluetoothEngine()
     @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
     @AppStorage("showInMenuBar") private var showInMenuBar = true
