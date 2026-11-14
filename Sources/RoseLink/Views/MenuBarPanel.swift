@@ -37,7 +37,6 @@ struct MenuBarLabel: View {
 /// 菜单栏下拉面板。保持与主窗口同一套引擎，状态实时同步。
 struct MenuBarPanel: View {
     @ObservedObject var engine: BluetoothEngine
-    @Environment(\.openWindow) private var openWindow
 
     @State private var noiseMode: NoiseMode = .normal
     @State private var eqPreset: EQPreset = .hifi
@@ -156,10 +155,7 @@ struct MenuBarPanel: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
-                // 先把 Dock 图标和菜单栏恢复成常规 App，否则唤回的窗口拿不到焦点。
-                AppDelegate.restoreDockIcon()
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
+                AppDelegate.shared?.showMainWindow()
             } label: {
                 Label("主窗口", systemImage: "macwindow")
             }

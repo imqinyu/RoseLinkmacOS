@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var engine: BluetoothEngine
+
     @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("autoConnectOnLaunch") private var autoConnectOnLaunch = true
@@ -24,6 +26,9 @@ struct SettingsView: View {
                         ForEach(ProtocolFamily.allCases) { family in
                             Text(family.displayName).tag(family.rawValue)
                         }
+                    }
+                    .onChange(of: preferredFamilyRaw) { newValue in
+                        engine.preferredFamily = ProtocolFamily(rawValue: newValue) ?? .auto
                     }
                 } header: {
                     Text("连接")

@@ -3,23 +3,36 @@ import SwiftUI
 @main
 struct RoseLinkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var engine = BluetoothEngine()
-    @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
     @AppStorage("showInMenuBar") private var showInMenuBar = true
+    @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
+
+    private var engine: BluetoothEngine { appDelegate.engine }
 
     var body: some Scene {
-        WindowGroup("RoseLink", id: "main") {
-            RootView()
-                .environmentObject(engine)
-                .frame(minWidth: 760, minHeight: 520)
-                .onAppear { applyPreferredFamily() }
-                .onChange(of: preferredFamilyRaw) { _ in applyPreferredFamily() }
+        // 主窗口不在这里——由 AppDelegate 按需创建 NSWindow，
+        // 这样启动时窗口根本不存在，不会有任何闪现。
+        MenuBarExtra(isInserted: $showInMenuBar) {
+            MenuBarPanel(engine: engine)
+        } label: {
+            MenuBarLabel(engine: engine)
         }
-        .windowToolbarStyle(.unified(showsTitle: true))
+        .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView()
+                .environmentObject(engine)
+        }
         .commands {
             CommandGroup(replacing: .newItem) {}
 
             CommandMenu("设备") {
+                Button("打开主窗口") {
+                    AppDelegate.shared?.showMainWindow()
+                }
+                .keyboardShortcut("0", modifiers: .command)
+
+                Divider()
+
                 Button("重新搜索") {
                     engine.startScan()
                 }
@@ -49,27 +62,10 @@ struct RoseLinkApp: App {
                 Toggle("在菜单栏显示控制项", isOn: $showInMenuBar)
             }
         }
-
-        MenuBarExtra(isInserted: $showInMenuBar) {
-            MenuBarPanel(engine: engine)
-        } label: {
-            MenuBarLabel(engine: engine)
-        }
-        .menuBarExtraStyle(.window)
-
-        Settings {
-            SettingsView()
-                .environmentObject(engine)
-        }
     }
 
     private func setNoise(_ mode: NoiseMode) {
         let cmd = CommandSet.profile(for: engine.activeFamily)
         engine.send(cmd.noiseMode(mode), note: mode.title)
-    }
-
-    private func applyPreferredFamily() {
-        let family = ProtocolFamily(rawValue: preferredFamilyRaw) ?? .auto
-        engine.preferredFamily = family
     }
 }

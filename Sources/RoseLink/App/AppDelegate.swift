@@ -1,31 +1,39 @@
 import AppKit
+import Combine
+import SwiftUI
 
-/// 在主窗口与「纯菜单栏工具」两种形态之间切换。
+private enum Keys {
+    static let hasLaunchedBefore = "hasLaunchedBefore"
+    static let alwaysHideWindow = "alwaysHideWindow"
+}
+
+/// 菜单栏优先的 App 控制器。
 ///
-/// - 主窗口可见时：`.regular`，Dock 有图标、有应用菜单栏
-/// - 主窗口全部关闭后：`.accessory`，Dock 图标和应用菜单一起收起，
-///   但 `MenuBarExtra` 的状态项仍然保留
-///
-/// 启动行为：
-/// - 首次运行会打开主窗口，让用户确认软件确实跑起来了
-/// - 之后启动只驻留菜单栏；打开「始终隐藏主窗口」后连首次也不弹
+/// 主窗口**不在 SwiftUI 场景图里**，而是按需创建 `NSWindow`。
+/// 这是刻意的：如果把它交给 `WindowGroup`，SwiftUI 会在启动时创建并显示它，
+/// 我们只能事后关掉——无论如何都会闪一帧以上。自建窗口则在启动路径上
+/// 根本不存在，用户看不到任何闪现。
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private enum Keys {
-        static let hasLaunchedBefore = "hasLaunchedBefore"
-        static let alwaysHideWindow = "alwaysHideWindow"
-    }
+    /// 引擎由 delegate 持有，界面通过 `environmentObject` 取用。
+    let engine = BluetoothEngine()
+
+    /// `@NSApplicationDelegateAdaptor` 会把我们的 delegate 挂成 SwiftUI 内部代理的子代理，
+    /// 所以 `NSApp.delegate as? AppDelegate` 永远是 nil。这里自己留一个引用。
+    private(set) static weak var shared: AppDelegate?
+
+    private var mainWindow: NSWindow?
+    private var titleCancellable: AnyCancellable?
 
     /// 默认只在菜单栏驻留，不弹主窗口。需要窗口的用户可在设置里关掉此项。
     override init() {
         UserDefaults.standard.register(defaults: [Keys.alwaysHideWindow: true])
         super.init()
+        Self.shared = self
     }
 
-    /// 本次启动是否要抑制主窗口。只在启动阶段短暂为 true。
-    private var pendingHiddenStart = false
-
-    private var startsHidden: Bool {
+    /// 本次启动是否不显示主窗口。
+    static var startsHiddenAtLaunch: Bool {
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: Keys.alwaysHideWindow) { return true }
         return defaults.bool(forKey: Keys.hasLaunchedBefore)
@@ -34,13 +42,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: 生命周期
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        // 先降级成菜单栏 App，避免登录项启动时窗口抢焦点。
-        if startsHidden {
+        if Self.startsHiddenAtLaunch {
             NSApp.setActivationPolicy(.accessory)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 必须在写入 hasLaunchedBefore 之前求值，否则第二次启动起永远读到 true。
+        let hiddenAtLaunch = Self.startsHiddenAtLaunch
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowWillClose(_:)),
@@ -53,35 +63,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWindow.didBecomeKeyNotification,
             object: nil
         )
-        pendingHiddenStart = startsHidden
+
         UserDefaults.standard.set(true, forKey: Keys.hasLaunchedBefore)
 
-        if pendingHiddenStart {
-            // SwiftUI 建窗口的时机比 didFinishLaunching 稍晚，分两次尝试，
-            // 每次都只在「还没关过」的情况下动手。
-            closeStartupWindow(after: 0.05)
-            closeStartupWindow(after: 0.35)
-            // 兜底：始终没等到窗口就撤回标记，避免之后用户手动打开的窗口被误关。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.pendingHiddenStart = false
-            }
+        // 自建窗口不会自动继承 navigationTitle，这里手动跟随连接状态更新标题。
+        titleCancellable = engine.$phase.sink { [weak self] phase in
+            self?.mainWindow?.title = phase.deviceName ?? "RoseLink"
         }
-    }
 
-    /// 启动即隐藏时，把 SwiftUI 已经建出来的主窗口关掉（此时窗口被隐藏，用户看不到闪动）。
-    private func closeStartupWindow(after delay: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.pendingHiddenStart else { return }
-            let windows = NSApp.windows.filter { Self.isUserWindow($0) }
-            guard !windows.isEmpty else { return }
-            self.pendingHiddenStart = false
-            windows.forEach { $0.close() }
+        // 协议族偏好要在自动连接之前生效。
+        if let raw = UserDefaults.standard.string(forKey: "preferredFamily"),
+           let family = ProtocolFamily(rawValue: raw) {
+            engine.preferredFamily = family
+        }
+
+        // 连接不再依赖窗口是否打开：开机自启时也能自动连上耳机。
+        engine.restoreLastConnection()
+
+        if !hiddenAtLaunch {
+            showMainWindow()
         }
     }
 
     /// 最后一个窗口关掉后继续驻留菜单栏，不退出。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    // MARK: 主窗口
+
+    @objc func showMainWindow() {
+        Self.restoreDockIcon()
+
+        if mainWindow == nil {
+            let hosting = NSHostingController(
+                rootView: RootView().environmentObject(engine)
+            )
+            let window = NSWindow(contentViewController: hosting)
+            window.title = engine.phase.deviceName ?? "RoseLink"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 900, height: 572))
+            window.minSize = NSSize(width: 760, height: 520)
+            window.isReleasedWhenClosed = false
+            window.center()
+            mainWindow = window
+        }
+
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: 窗口通知
@@ -106,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: 辅助
 
-    /// 从菜单栏唤回主窗口前调用。
+    /// 从菜单栏唤回主窗口前调用：恢复 Dock 图标。
     static func restoreDockIcon() {
         if NSApp.activationPolicy() != .regular {
             NSApp.setActivationPolicy(.regular)
