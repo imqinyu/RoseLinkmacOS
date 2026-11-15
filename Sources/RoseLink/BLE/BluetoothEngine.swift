@@ -183,6 +183,13 @@ final class BluetoothEngine: NSObject, ObservableObject {
     /// 当前设备标识，用来把仓电量缓存按设备分开存。
     private var currentDeviceKey: String?
 
+    /// 系统蓝牙连接通知的注册句柄，必须持有才有效。
+    private var connectNotification: IOBluetoothUserNotification?
+    /// 用户在 App 内主动「断开」后，不再自动重连，直到他手动再连一次。
+    private var manuallyDisconnected = false
+    /// 系统可能会连发多条连接事件，用 work item 做防抖。
+    private var reconnectWorkItem: DispatchWorkItem?
+
     private var stream = FrameStream(family: .rsCommonV2)
     private var sequence: UInt8 = 0
     private var pendingScan = false
@@ -193,11 +200,15 @@ final class BluetoothEngine: NSObject, ObservableObject {
         static let lastDeviceID = "lastDeviceID"
         static let lastDeviceName = "lastDeviceName"
         static let autoConnect = "autoConnectOnLaunch"
+        static let autoReconnect = "autoReconnectOnSystemConnect"
     }
 
     override init() {
         super.init()
-        UserDefaults.standard.register(defaults: [Keys.autoConnect: true])
+        UserDefaults.standard.register(defaults: [
+            Keys.autoConnect: true,
+            Keys.autoReconnect: true,
+        ])
         central = CBCentralManager(delegate: self, queue: .main)
     }
 
@@ -247,6 +258,7 @@ final class BluetoothEngine: NSObject, ObservableObject {
 
     func connect(_ device: DiscoveredDevice) {
         remember(device)
+        manuallyDisconnected = false
         currentDeviceKey = device.id
         switch device.transport {
         case .rfcomm:
@@ -264,12 +276,79 @@ final class BluetoothEngine: NSObject, ObservableObject {
         refreshPairedDevices()
 
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: Keys.autoConnect) else { return }
+        guard defaults.bool(forKey: Keys.autoConnect) else {
+            registerConnectNotification()
+            return
+        }
         let savedID = defaults.string(forKey: Keys.lastDeviceID)
         let savedName = defaults.string(forKey: Keys.lastDeviceName)
         let target = devices.first { $0.id == savedID }
             ?? devices.first { $0.name == savedName && !$0.name.isEmpty }
-        guard let target else { return }
+        guard let target else {
+            registerConnectNotification()
+            return
+        }
+        connect(target)
+        registerConnectNotification()
+    }
+
+    // MARK: 系统蓝牙连接监听
+
+    /// 监听 macOS 层的蓝牙连接事件。耳机关机/离开范围再回来时，系统会重新
+    /// 建立链路并回调这里，我们据此自动恢复控制通道。
+    ///
+    /// 注意：注册瞬间 IOBluetooth 会**回放当前已连接设备**（实测会连发两条），
+    /// 所以下面同时做了状态守卫、防抖和延迟。
+    private func registerConnectNotification() {
+        guard connectNotification == nil else { return }
+        connectNotification = IOBluetoothDevice.register(
+            forConnectNotifications: self,
+            selector: #selector(systemBluetoothDeviceConnected(_:device:))
+        )
+    }
+
+    @objc private func systemBluetoothDeviceConnected(
+        _ notification: IOBluetoothUserNotification,
+        device: IOBluetoothDevice
+    ) {
+        let address = device.addressString
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard !self.manuallyDisconnected else { return }
+            guard UserDefaults.standard.bool(forKey: Keys.autoReconnect) else { return }
+            guard let savedID = UserDefaults.standard.string(forKey: Keys.lastDeviceID),
+                  let address, address == savedID else { return }
+
+            // 只在真正空闲或上次失败时才动作，避免打断正在进行的连接。
+            switch self.phase {
+            case .idle, .failed:
+                break
+            default:
+                return
+            }
+
+            self.reconnectWorkItem?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.autoReconnectIfNeeded()
+            }
+            self.reconnectWorkItem = work
+            // 链路刚建立时 SDP / 控制服务可能还没就绪，留一点缓冲。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        }
+    }
+
+    private func autoReconnectIfNeeded() {
+        guard !manuallyDisconnected else { return }
+        switch phase {
+        case .idle, .failed:
+            break
+        default:
+            return
+        }
+        refreshPairedDevices()
+        guard let savedID = UserDefaults.standard.string(forKey: Keys.lastDeviceID),
+              let target = devices.first(where: { $0.id == savedID }) else { return }
+        appendLog(.outbound, [], note: "检测到系统蓝牙重新连接，自动恢复控制通道")
         connect(target)
     }
 
@@ -434,11 +513,14 @@ final class BluetoothEngine: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        manuallyDisconnected = true
+        reconnectWorkItem?.cancel()
+        // 先落状态再拆通道：否则 close() 触发 rfcommChannelClosed 会把 phase 覆盖成失败态。
+        if case .ready = phase { phase = .idle }
         if let peripheral, peripheral.state != .disconnected {
             central.cancelPeripheralConnection(peripheral)
         }
         teardown()
-        if case .ready = phase { phase = .idle }
     }
 
     // MARK: 发送

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("preferredFamily") private var preferredFamilyRaw = ProtocolFamily.auto.rawValue
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("autoConnectOnLaunch") private var autoConnectOnLaunch = true
+    @AppStorage("autoReconnectOnSystemConnect") private var autoReconnectOnSystemConnect = true
     @AppStorage("alwaysHideWindow") private var alwaysHideWindow = true
     @AppStorage("menuBarBatterySource") private var menuBarBatterySource = BatterySource.highest.rawValue
     @AppStorage("menuBarShowsBattery") private var menuBarBatteryShowsValue = true
@@ -42,10 +43,12 @@ struct SettingsView: View {
                     Toggle("启动时自动连接上次的设备", isOn: $autoConnectOnLaunch)
 
                     Toggle("始终隐藏主窗口", isOn: $alwaysHideWindow)
+
+                    Toggle("耳机重新连上时自动恢复控制", isOn: $autoReconnectOnSystemConnect)
                 } header: {
-                    Text("启动")
+                    Text("连接与启动")
                 } footer: {
-                    Text("默认开启：每次启动只驻留菜单栏，开机自启不会弹窗。关闭后，首次运行会打开一次主窗口，之后同样只驻留菜单栏。")
+                    Text("监听到系统蓝牙重新建立连接时，自动打开上次设备的控制通道，无需手动点连接。在 App 内主动点「断开」后不会自动重连。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
